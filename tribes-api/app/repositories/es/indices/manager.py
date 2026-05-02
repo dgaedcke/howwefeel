@@ -24,6 +24,7 @@ from elasticsearch import AsyncElasticsearch, BadRequestError
 
 from ..config import ESConfig
 from ..exceptions import MappingMigrationConflictError
+from .contacts import CONTACTS_MAPPING
 from .pending_jobs import PENDING_JOBS_MAPPING
 
 # Each entry is (config-attribute-name, mapping-dict). `ensure_indices`
@@ -32,6 +33,7 @@ from .pending_jobs import PENDING_JOBS_MAPPING
 # `es_index_prefix` still see the correct names.
 _REGISTRY: list[tuple[str, dict[str, Any]]] = [
     ("pending_jobs_index", PENDING_JOBS_MAPPING),
+    ("contacts_index", CONTACTS_MAPPING),
 ]
 
 
