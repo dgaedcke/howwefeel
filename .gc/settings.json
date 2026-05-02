@@ -1,19 +1,7 @@
 {
+  "editorMode": "normal",
   "hooks": {
     "PreCompact": [
-      {
-        "hooks": [
-          {
-            "command": "gc prime",
-            "type": "command"
-          },
-          {
-            "command": "gc handoff \"context cycle\"",
-            "type": "command"
-          }
-        ],
-        "matcher": ""
-      },
       {
         "hooks": [
           {
@@ -32,11 +20,11 @@
       {
         "hooks": [
           {
-            "command": "gc prime",
+            "command": "export PATH=\"$HOME/go/bin:$HOME/.local/bin:$PATH\" \u0026\u0026 GC_MANAGED_SESSION_HOOK=1 GC_HOOK_EVENT_NAME=SessionStart gc prime --hook",
             "type": "command"
           }
         ],
-        "matcher": ""
+        "matcher": "startup"
       },
       {
         "hooks": [
@@ -70,5 +58,6 @@
         "matcher": ""
       }
     ]
-  }
+  },
+  "skipDangerousModePermissionPrompt": true
 }

@@ -1,405 +1,285 @@
-# PRD: How We Feel — React Native + Node Implementation
+# PRD: MoodMap — Local-First Emotion Log (Experiment)
 
-> **Status:** Draft. Breadth over polish. Many open questions are intentional —
-> downstream review legs are expected to surface and resolve them. Where the
-> initial-spec.md is known to be wrong, this PRD calls it out rather than papering
-> over it.
+> **Status:** Consolidated scope — human answers to 19 critical PRD questions integrated.
+> **Context:** This is a LOCAL EXPERIMENT to test Gas Town pipeline throughput, not a
+> production app. Single developer, single device, single user. No deploy target, no app
+> store submission, no real users. Goal: see how fast Gas Town can execute a full
+> implementation across client + minimal backend tiers.
 
 ---
 
 ## Problem Statement
 
-Build a production-grade, privacy-first mobile app (iOS + Android via Expo) and
-accompanying Node.js backend that helps people develop **emotional granularity**
-— the ability to identify, name, and distinguish their feelings with precision.
+Build a local-first mobile app (iOS + Android via Expo) and minimal Node.js backend
+that helps a single user develop **emotional granularity** — the ability to identify,
+name, and distinguish their feelings with precision. The app is modeled on the original
+How We Feel app, which uses the **Mood Meter**: a 2D grid where the x-axis is **valence**
+(unpleasant ↔ pleasant) and the y-axis is **energy** (low ↔ high).
 
-The app is modeled on the original How We Feel app, which is built on Marc
-Brackett's Yale RULER framework and the **Mood Meter**: a 2D grid where the
-x-axis is **valence** (unpleasant ↔ pleasant) and the y-axis is **energy**
-(low ↔ high). The grid is divided into four colored quadrants:
+**Core concept:** The Mood Meter is a 10×10 grid. The x-axis is **valence**
+(unpleasant ↔ pleasant); the y-axis is **energy** (low ↔ high). Each cell carries
+its own emotion label, sourced from the Russell circumplex (a public-domain
+2D affect model). Users tap a cell, optionally add a journal note, and save in
+under 30 seconds.
 
-| Quadrant     | Energy | Valence    | Example feelings                      |
-|--------------|--------|------------|---------------------------------------|
-| Red          | High   | Unpleasant | Angry, anxious, frustrated, stressed  |
-| Yellow       | High   | Pleasant   | Excited, joyful, hopeful, energized   |
-| Blue         | Low    | Unpleasant | Sad, lonely, disappointed, bored      |
-| Green        | Low    | Pleasant   | Calm, content, relaxed, peaceful      |
-
-Within each quadrant, users zoom into a finer-grained taxonomy of named
-emotions. The taxonomy size in the reference app is on the order of ~100 named
-emotions; the exact list and tiering is an open question for review (see Open
-Questions §1).
-
-**This is mental-health-adjacent data.** It is highly sensitive. Failure modes
-include: leaking emotional history, mishandling a user in crisis, breaking sync
-in a way that loses logs, and surveillance-by-default analytics. Trust is the
-product.
-
-> **Note on initial-spec.md:** The starting-point sketch describes a
-> Plutchik-style emotion wheel with 8 core families (Joy, Sadness, Fear,
-> Anger, Disgust, Surprise, Trust, Anticipation). That model is **wrong** for
-> this product. This PRD replaces it with the Mood Meter (valence × energy).
+**Scope note:** Russell circumplex replaces the Plutchik wheel from initial-spec.md.
+No sub-tiering (quadrant → sub-region → emotion) in v1; each cell is atomic.
+No intensity slider; intensity is implicit in the choice of cell.
 
 ---
 
 ## Goals
 
-### Product goals
+### Core product goals
 
-1. **Time-to-log under 30 seconds** for the common case (Mood Meter tap → emotion
-   pick → save). Fast enough that users actually do it multiple times a day.
-2. **Build emotional granularity over time.** Encourage users to move past
-   "fine" / "bad" toward specific named emotions.
-3. **Surface meaningful patterns** — what times of day, contexts, and activities
-   correlate with which emotional states.
-4. **Offline-first.** Logging, browsing history, and viewing insights all work
-   with no network. Sync is opportunistic.
-5. **Privacy by default.** No third-party analytics SDKs that exfiltrate user
-   content. Journals encrypted at rest. Account deletion fully cascades.
-6. **Safe handling of distress.** When a user logs signals consistent with
-   crisis (suicidal ideation, self-harm intent), surface region-appropriate
-   resources without being pushy or paternalistic in normal use.
+1. **Time-to-log under 30 seconds** — Mood Meter tap → save. No friction.
+2. **Build emotional granularity.** Move beyond "fine" toward specific named
+   emotions indexed in the Mood Meter.
+3. **Basic insights.** Show check-in frequency (e.g., "14 check-ins this month")
+   and mood distribution by grid region (no advanced analytics in v1).
+4. **Offline-first, local-only.** v1 has no sync. All data stays on device.
+   Optional sync endpoints exist for future phases.
+5. **Developer ergonomics.** Typed, testable, reproducible. Single-device exp.
 
-### Engineering goals
+### Experiment goals
 
-7. **Production-grade quality bar:** typed code, tests at multiple levels,
-   CI/CD, observability, feature flags, error budgets.
-8. **GDPR + CCPA compliance:** data export, right to deletion, clear consent
-   for any optional data sharing.
-9. **Two-platform parity** (iOS and Android) with one shared React Native
-   codebase, shipped via Expo's managed workflow.
-10. **Reasonable cost envelope** for a v1: single-region backend, no exotic
-    infrastructure.
+6. **Test Gas Town pipeline throughput.** See how fast polecats can span
+   client + server tiers with parallel dispatch and realistic integration
+   challenges.
 
 ---
 
-## Non-Goals
+## Explicitly Out of Scope
 
-The following are explicitly **out of scope for v1.** Some may return in later
-phases; calling them out here keeps scope honest.
+This is a single-device, single-user local experiment. The following are OUT:
 
-- **Web app** (mobile only).
-- **Wearable / HealthKit / Google Fit integration.** No biometric ingestion.
-- **Therapist / clinical integrations.** This is not a medical device. We will
-  not claim diagnostic or therapeutic efficacy.
-- **Social features.** No public profile, no feed, no sharing emotion logs to
-  contacts. (Anonymous, opt-in research aggregates may be considered later;
-  not v1.)
-- **Real-time multi-device collaboration.** Sync is eventually consistent.
-- **Gamification beyond simple streaks.** No leaderboards, badges, points,
-  XP. Streaks themselves are tentative — see Open Questions §5.
-- **AI-generated journal prompts or summarization in v1.** (LLM features are
-  appealing but introduce data-handling complexity that needs its own design
-  pass.)
-- **Admin / ops web panel** in v1. Operate via CLI + database access until
-  load justifies a UI.
-
----
-
-## User Stories / Scenarios
-
-### Core loop
-
-1. **First-time user** opens the app, completes onboarding (≤3 screens), grants
-   notification permission (or skips), and logs their first emotion in under 60
-   seconds.
-2. **Daily user** receives a check-in push at a configured time, taps it,
-   lands directly in the Mood Meter, picks a quadrant → an emotion → optionally
-   adds a journal note → saves. End-to-end under 30 seconds.
-3. **Reflective user** opens Insights and reviews their last 30 days: dominant
-   quadrant by week, time-of-day patterns, top contexts (work, sleep, family).
-4. **Journaling user** scrolls a date and writes a longer reflection attached
-   to a previous emotion log.
-
-### Edge / sensitive cases
-
-5. **User in distress** logs a high-energy unpleasant emotion (Red quadrant)
-   and selects an emotion label like "hopeless" or writes a journal note
-   matching crisis indicators. The app surfaces a non-blocking, region-aware
-   resource card (e.g., 988 in the US, Samaritans in the UK) and a one-tap
-   "talk to someone" affordance. **Never blocks the user from saving the log.**
-6. **Privacy-conscious user** signs up without OAuth ("local-only"), uses the
-   app entirely offline, and never has data leave the device. Later they may
-   opt into sync without losing history.
-7. **Multi-device user** signs in on a new phone. All historical logs sync
-   down. Local edits made offline on either device merge cleanly.
-8. **Late logger** opens the app at 9pm to log how they felt this morning at
-   8am (`logged_at` ≠ `created_at`). The app supports backdating and shows
-   the entry on the morning's timeline, not the evening's.
-9. **GDPR user** requests data export and gets a downloadable JSON within 24
-   hours. Requests deletion and all PII is purged within the legal window.
-10. **Accessibility user** with VoiceOver / TalkBack can navigate the Mood
-    Meter, log an emotion, and review insights without sighted use. Dynamic
-    type and high-contrast variants supported.
-11. **Non-English user** uses the app in their language; emotion labels,
-    insights, and notifications are localized; timestamps respect their
-    timezone and DST.
-12. **Account-deleting user** taps "delete my account" and is shown what will
-    be erased, when, and any data that will be retained (e.g., aggregated
-    anonymous metrics, if any). Confirms with re-auth.
+- **Multi-device sync** (v1 is local-only).
+- **User accounts** (hardcoded dev account for backend endpoints only).
+- **OAuth / Apple Sign-In / Google Sign-In** (no real auth in v1).
+- **Photos, photo attachments** (text journal notes only).
+- **Streaks** (replaced with simple "X check-ins this month" stat).
+- **Crisis safeguards / intervention surfaces** (appropriate only for reviewed,
+  deployed apps — skip for experiment).
+- **Gamification** (no leaderboards, badges, points, XP).
+- **Therapist / clinical integrations** (this is not a medical device).
+- **Real-time collaboration, presence, or social features**.
+- **AI / LLM features** (no prompts, summarization, classification in v1).
+- **Encryption beyond OS file protection** (plain expo-sqlite, no SQLCipher).
+- **GDPR / CCPA tooling** (no compliance requirements for local experiment).
+- **Internationalization** (English-only; i18n scaffolding can wait).
+- **App store submission** (local dev build only).
+- **Production hosting / deploy** (server runs on dev machine).
 
 ---
 
-## Constraints
+## User Story
 
-### Technical
+**The Single User's Day:**
 
-- **Mobile:** React Native via **Expo managed workflow** (or Expo "prebuild"
-  if a custom native module becomes necessary — flag for review).
-- **Backend:** Node.js (Fastify or Express — open question §6), PostgreSQL,
-  Redis, deployed single-region for v1.
-- **Local storage:** SQLite, encrypted at rest (SQLCipher or platform-keyed
-  equivalent). Note: SQLCipher with Expo managed workflow may require Expo
-  prebuild — needs verification (Open Question §3).
-- **Network:** REST + JSON over HTTPS with JWT bearer tokens. (gRPC and
-  websockets are not justified in v1.)
-- **Auth:** Apple Sign-In **(required for App Store given any social login
-  presence)**, Google OAuth, plus a passwordless local-only mode that does
-  not register a server-side identity.
-- **Push:** Expo Push Service in front of APNs/FCM.
-- **CI/CD:** GitHub Actions (assumed); EAS Build for app binaries.
-- **Observability:** Backend traces + structured logs (vendor TBD — see Open
-  Questions §11). On-device error reporting that scrubs PII before send;
-  vendor TBD and must satisfy "no user-content exfiltration" rule.
+1. Opens app, taps the 10×10 Mood Meter, lands on a cell (e.g., row 3, col 7).
+2. Cell label reads (e.g.) "content" — confirms, optionally adds a journal note.
+3. Save. Timestamp recorded. Done in <30 seconds.
+4. Later, opens Insights: sees "14 check-ins this month" and a heatmap showing
+   which regions of the grid they visited most.
+5. Can browse past logs by date and re-read journal notes.
+6. Can schedule a daily 9am reminder via local notification.
+7. If they wish, can send a "sync now" to a server (opt-in, future phase).
 
-### Privacy / compliance
-
-- **No third-party analytics SDKs that exfiltrate user content.** First-party
-  event metrics only, scrubbed of any free-text journal content and any
-  emotion labels at user-identifiable granularity. Aggregate counts only.
-- **GDPR / CCPA:** export, deletion, consent records, DPA-able sub-processors.
-- **At-rest encryption:** journal notes encrypted at rest server-side
-  (per-user key managed via KMS, exact scheme TBD).
-- **In-transit encryption:** TLS 1.2+ everywhere; cert pinning is an open
-  question for v1 vs. v1.x.
-- **No background tracking** (location, contacts, calendar) unless an explicit
-  feature requests it with separate consent.
-- **Children:** age-gate at signup. Under-13 (US) / under-16 (EU) handling
-  needs legal input — possibly blocked from cloud sync, possibly blocked
-  outright for v1.
-
-### Operational
-
-- **Cost ceiling for v1:** order-of-magnitude $X/month for first 10k MAU
-  (concrete number TBD, but the architecture must not require a fleet).
-- **On-call:** single engineer for v1; alerts must be actionable, not noisy.
-- **Region:** single primary region (US-East assumed); multi-region is a v2+
-  concern.
+**No user accounts, no sync by default, no crisis intervention, no multilingual UI.**
 
 ---
 
-## Open Questions
+## Tech Stack
 
-Numbered for traceability so review legs can reference them.
+### Client (iOS + Android)
 
-### Product / model
+- **Framework:** React Native via Expo managed workflow.
+- **Language:** TypeScript (strict mode).
+- **Local storage:** expo-sqlite (plain, no encryption layer; rely on OS file protection).
+- **Notifications:** expo-notifications (local scheduling only; no FCM/APNs in v1).
+- **State management:** TBD (Zustand, Context, or minimal Redux).
 
-1. **Emotion taxonomy.** What is the canonical list of named emotions per
-   quadrant, and how many tiers does the Mood Meter expose (quadrant → emotion,
-   or quadrant → sub-region → emotion)? Need a defensible source list.
-2. **Intensity.** Does each log carry an intensity score on top of the named
-   emotion (1–5? continuous?), or is intensity *implicit* in the choice of
-   emotion ("annoyed" vs "furious")? The reference app does not appear to use
-   a separate intensity slider — needs confirmation.
-3. **Backdating.** Can users edit `logged_at` to record past feelings? How far
-   back? What happens to streak / insights if they backdate?
-4. **Crisis safeguards — design.** What heuristics trigger the resources
-   surface? Keyword scan of journal text? Specific emotion labels? Both? How
-   do we avoid both false negatives (missing real distress) and false positives
-   (paternalistic spam after one bad day)? Is there a settings opt-out?
-5. **Streaks.** Are streaks daily? "At least one log per day in user's
-   timezone"? What about timezone changes, travel, DST? Does a missed day
-   reset, or do we offer a grace period? Are streaks visible at all in v1, or
-   does that introduce unhealthy compulsion?
-6. **Photo attachments.** The initial sketch mentions photos. What's the use
-   case — does a photo attach to an emotion log? Is it ever synced (PHI
-   implications)? Or is it strictly local? Recommend deferring out of v1
-   unless there's a strong reason.
-7. **Activities (coping suggestions).** Bundle in v1, or defer? If included,
-   how is the library curated and by whom? Evidence basis?
+### Server (Optional / Phase 2+)
 
-### Engineering / architecture
+- **Runtime:** Node.js with TypeScript.
+- **Framework:** Express or Fastify (polecat's choice).
+- **Database:** SQLite (not Postgres; keep migrations lightweight).
+- **Auth:** Simple JWT; single hardcoded dev account for v1.
+- **API style:** REST + JSON.
+- **Sync endpoints (future):** `/auth/login`, `/sync/pull`, `/sync/push`, `/journal` CRUD.
+- **Sync model (when built):** Pull-then-push on app open + manual "Sync Now" button.
+  Last-write-wins by client-set `updated_at`. No HLC, no CRDT, no audit replication.
+- **Hosting:** Dev machine only (no deploy target, no production).
 
-8. **Sync conflict resolution.** Last-write-wins keyed on what?
-   - `logged_at` is **the time of the feeling**, not the time of the write,
-     so it is the wrong key for conflict resolution.
-   - Need a separate `updated_at` on every mutable row, set by the device at
-     mutation time. Server resolves conflicts by `updated_at`. Add `updated_at`
-     to all mutable entities.
-   - For deletes, soft-delete with a `deleted_at` tombstone that wins over
-     equal-or-older `updated_at` on other replicas.
-   - Open: do we need vector clocks or HLC for true causal ordering, or is
-     wall-clock `updated_at` "good enough"? (Probably good enough for v1
-     given the data shape — single-user, low write rate.)
-9. **Local DB encryption mechanism.** SQLCipher requires native modules. With
-   Expo managed workflow, the alternatives are `op-sqlite` + SQLCipher (needs
-   prebuild) or platform-keyed file-level encryption + plain SQLite. Pick one,
-   know the tradeoff.
-10. **Backend framework.** Fastify vs Express. Fastify is faster and has
-    better schema validation; Express has the ecosystem. Either works. Pick
-    one.
-11. **Observability vendor.** Datadog, Honeycomb, OpenTelemetry-only? Must
-    not require shipping user content. Cost vs. ergonomics tradeoff.
-12. **Feature flags.** GrowthBook (self-hosted), LaunchDarkly (paid), or
-    config-file flags? Need a way to dark-launch risky changes (esp. sync
-    engine, crisis surfaces).
-13. **Testing layers.** Unit (Jest), integration (Supertest for API), E2E
-    (Detox or Maestro for app), contract tests between app and API, visual
-    regression for the Mood Meter? Define minimum bar.
-14. **Migration strategy.** SQLite schema migrations on the device need to
-    handle very-old client versions. Postgres migrations need a forward-only
-    strategy. Pick tools (e.g., Drizzle / Knex / Prisma) and document.
-15. **Internationalization.** What languages at launch? English-only v1 with
-    i18n scaffolding from day one is the safe answer, but confirm.
-16. **Timezones.** All timestamps stored UTC + an `original_tz` field, or
-    local-civil-time strings for `logged_at`? Affects insights ("what time of
-    day do I feel X") materially.
-17. **Push permission strategy.** Hard-ask up-front, soft-ask after first
-    log, or not until user enables reminders? Affects long-term retention.
+### Development
 
-### Compliance / safety
-
-18. **Crisis content storage.** Do we ever process journal text on the
-    server (for crisis detection, or anything else)? If yes, how is that
-    bounded and disclosed? If we keep all NLP on-device, what's the model
-    size and quality tradeoff?
-19. **Account-recovery without sync.** A local-only user who loses their
-    device loses their data. Is that the contract, or do we offer optional
-    encrypted backup with a user-managed key?
-20. **Sub-processors list.** Hosting (Fly.io / Railway / AWS?), push
-    (Expo / direct APNs/FCM), email (Postmark / SES?), error reporting,
-    KMS — each is a sub-processor for GDPR purposes. Needs compiling.
+- **Language & tooling:** TypeScript end-to-end, ESLint, Prettier, Jest.
+- **Source:** GitHub (branch-per-polecat model via Gas Town).
+- **CI/CD:** GitHub Actions for linting, type-check, unit tests.
+- **No:** observability vendors, analytics SDKs, third-party integrations,
+  compliance automation, app store CI/CD.
 
 ---
 
-## Rough Approach
+## Remaining Design Questions
 
-This is the **shape** of the system, not the design. The 6 design legs that
-follow this PRD will produce the actual design document.
+Minimal unknowns, deferred to design legs.
 
-### Architecture sketch
+1. **Mood Meter cell labels.** How are the 10×10 grid cells labeled? Sample from
+   Russell circumplex? Hand-curated? What tool / reference?
+2. **Journal UI.** Inline text input vs. separate editor view? Character limits?
+   Past journal retrieval / search?
+3. **Insights heatmap.** How to visually represent which grid regions the user
+   visited most? Color intensity, frequency bars, or simple counts?
+4. **Reminder UX.** How to schedule daily notifications via expo-notifications?
+   UI for time-of-day config? Does reminder fire on app start or scheduled?
+5. **Backend server setup.** If polecats build server tier: Express or Fastify?
+   Local SQLite or in-memory? Session storage (file-based or memory)?
+   How to seed / reset dev data?
+
+---
+
+## Architecture (Phase 1 + Early Backend)
+
+### Phase 1: Local-only mobile
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│  Mobile App (React Native, Expo)                             │
-│   ├─ UI layer (Mood Meter, Insights, Journal, Settings)      │
-│   ├─ State (Zustand or Redux Toolkit; TBD)                   │
-│   ├─ Local DB (SQLite, encrypted at rest)                    │
-│   ├─ Sync engine (background, idempotent, resumable)         │
-│   ├─ Notifications (Expo Notifications, locally scheduled)   │
-│   └─ Crisis-safety surfaces (on-device heuristic)            │
-└────────────┬─────────────────────────────────────────────────┘
-             │ HTTPS + JWT
-┌────────────▼─────────────────────────────────────────────────┐
-│  API (Node.js, Fastify-or-Express)                           │
-│   ├─ Auth (Apple, Google, refresh tokens)                    │
-│   ├─ Sync endpoints (upsert + cursor-based pull)             │
-│   ├─ Account / GDPR (export, delete, consent log)            │
-│   ├─ Push registration                                       │
-│   └─ Health, metrics, structured logs                        │
-├──────────────────────────────────────────────────────────────┤
-│  Postgres   │  Redis (sessions, rate limit)  │  Job queue    │
-│  (users,    │                                │  (BullMQ for  │
-│  emotion_   │                                │  exports,     │
-│  logs,      │                                │  deletions)   │
-│  journals,  │                                │               │
-│  devices,   │                                │               │
-│  consent)   │                                │               │
-└──────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────┐
+│  Mobile App (React Native, Expo)      │
+│   ├─ Mood Meter UI (10×10 grid)       │
+│   ├─ Journal editor                   │
+│   ├─ Insights view (heatmap + stat)   │
+│   ├─ Local SQLite DB                  │
+│   ├─ Local notifications (reminders)  │
+│   └─ Settings (time, permissions)     │
+└───────────────────────────────────────┘
 ```
 
-### Data model sketch (server)
+### Phase 2+: Optional backend (for testing Gas Town)
 
-All mutable rows carry **`created_at`, `updated_at`, and `deleted_at`** (soft
-delete). `updated_at` drives sync conflict resolution; `logged_at` is the
-*time the feeling occurred* and is purely a domain field.
+Once Phase 1 is solid, add optional backend for sync:
 
 ```
-users(id, auth_provider, provider_user_id, email_hash,
-      created_at, updated_at, deleted_at, gdpr_consent_at, locale, tz)
-
-emotion_logs(id, user_id,
-             quadrant /* enum: red|yellow|blue|green */,
-             emotion_label /* canonical string */,
-             intensity /* nullable until §1, §2 resolved */,
-             context_tags[], journal_id /* nullable */,
-             logged_at /* time of feeling */,
-             created_at, updated_at, deleted_at,
-             origin_device_id, schema_version)
-
-journals(id, user_id, body_encrypted, created_at, updated_at, deleted_at)
-
-devices(id, user_id, platform, push_token_encrypted,
-        last_seen_at, created_at, updated_at, deleted_at)
-
-consents(id, user_id, kind /* sync, analytics, research */,
-         granted_at, revoked_at)
+Mobile (Phase 1) <--opt-in REST + JWT--> Backend (Node.js)
+                                          ├─ Express or Fastify
+                                          ├─ SQLite (local dev)
+                                          └─ Hardcoded dev account
 ```
 
-Schema is illustrative; final shape is for the design legs.
+**Sync model:** Pull-then-push on app open + manual "Sync Now" button.
+Last-write-wins by client `updated_at`. Single hardcoded user.
+No production hosting; server runs on dev machine.
 
-### Sync engine sketch
+### Client data model (local SQLite)
 
-- Each device assigns a UUID `id` to new rows on creation.
-- Each mutation updates `updated_at = device-local-now`.
-- Push: device sends rows where `local_updated_at > last_push_synced_at`.
-- Pull: device requests `?since=<server-cursor>`, gets all rows with
-  `server_updated_at > cursor`.
-- Conflict: server keeps the row with the larger `updated_at`. Tie → larger
-  `(updated_at, device_id)` deterministically.
-- Tombstones: a row with `deleted_at != NULL` wins over a same-or-older
-  `updated_at` non-deleted version.
-- Hard delete (account purge) is a separate, server-initiated event.
+```
+emotion_logs(
+  id TEXT PRIMARY KEY,
+  grid_row INT,          -- 0–9
+  grid_col INT,          -- 0–9
+  cell_label TEXT,       -- e.g., "content", "anxious"
+  journal_id TEXT,       -- optional FK
+  logged_at DATETIME,    -- when the feeling occurred (for display)
+  created_at DATETIME,   -- when the log was created
+  updated_at DATETIME,   -- for future sync conflict resolution
+  synced BOOL DEFAULT 0  -- tracks whether sent to server
+)
+
+journals(
+  id TEXT PRIMARY KEY,
+  body TEXT,
+  created_at DATETIME,
+  updated_at DATETIME
+)
+```
+
+### Server data model (optional, Phase 2+)
+
+```
+users(id, device_id, created_at)
+
+emotion_logs(
+  id, user_id, grid_row, grid_col, cell_label, journal_id,
+  logged_at, created_at, updated_at, deleted_at
+)
+
+journals(id, user_id, body, created_at, updated_at, deleted_at)
+```
+
+Soft deletes via `deleted_at`. `updated_at` key for LWW sync.
+
+### Future sync sketch (when built)
+
+When backend is added (Phase 2+), sync works as follows:
+
+- **Pull on app open.** Client requests `GET /sync/pull?since=<cursor>`, server
+  returns all rows with `updated_at > cursor`.
+- **Push on manual action.** User taps "Sync Now" or equivalent. Client sends
+  `POST /sync/push` with all local rows.
+- **Conflict resolution.** Server keeps the row with the larger `updated_at`.
+  For equal timestamps, larger `(updated_at, device_id)` wins.
+- **Deletes.** Soft delete via `deleted_at` tombstone. Tombstone beats a same-or-older
+  non-deleted version.
+- **No real accounts.** Hardcoded dev account (e.g., device_id) for v1.
 
 ### Phased rollout
 
-| Phase | Scope                                                         |
-|-------|---------------------------------------------------------------|
-| 0     | Repo skeletons, CI, design system, lint/type/test baselines  |
-| 1     | Local-only flow: Mood Meter, log, history, basic insights    |
-| 2     | Auth + sync (cloud, multi-device)                            |
-| 3     | Journal full-text, insights expansion, contextual safety     |
-| 4     | Notifications + reminders                                    |
-| 5     | GDPR tooling, deletion pipeline, polish, accessibility audit |
-| 6     | i18n, app store hardening, crisis-resource regional packs    |
+| Phase | Scope | Notes |
+|-------|-------|-------|
+| 1 | Local-only: Mood Meter, log, journal, insights | No sync, no backend. Mobile only. |
+| 2+ | Optional backend + sync | If polecats want to test Gas Town cross-tier work. |
 
-Each phase ships behind feature flags where it touches existing surfaces.
+Phase 1 is the experiment target. Phase 2+ is stretch for Gas Town pipeline reps.
 
 ### Quality bar
 
-- Typed: TypeScript end-to-end (strict).
-- Tests: unit for pure logic, integration for API + DB, E2E (Detox/Maestro)
-  for the golden logging path, contract tests for the sync schema.
-- CI/CD: PR gates (lint, typecheck, unit, integration); main deploys
-  backend; tagged releases trigger EAS Build for app binaries.
-- Observability: structured logs, traces, RED metrics on the API; on-device
-  error reporting (PII-scrubbed); a dashboard showing sync success rate,
-  crash-free sessions, and time-to-log p50/p95.
-- Accessibility: meets WCAG 2.1 AA equivalents for mobile; Mood Meter
-  navigable by VoiceOver/TalkBack with semantic labels; respects Dynamic
-  Type / Font Scale; tested with system-level color filters.
+- **Typing:** TypeScript (strict mode) across mobile and server.
+- **Testing:** Unit tests for state logic (Jest); integration tests for API
+  endpoints; manual smoke test of the golden path (log → save → insights view).
+- **Linting:** ESLint + Prettier. Pre-commit hook via Husky.
+- **CI/CD:** GitHub Actions on PR: lint, typecheck, unit tests. Manual test
+  before merge.
+- **No:** observability vendors, error reporting, dashboards, accessibility
+  audit (v1 scope). Emoji support, animations, advanced visuals deferred.
 
 ---
 
-## Known gaps from the initial-spec.md sketch
+## Scope Consolidation Summary
 
-For the review legs' awareness, this draft *intentionally* corrects or flags
-the following errors in `initial-spec.md`:
+This PRD replaces the initial-spec.md entirely. Key consolidations based on
+human PRD review answers:
 
-- **Plutchik wheel → Mood Meter.** Replaced.
-- **Emotion taxonomy.** Promoted to Open Question §1 instead of hand-waving "~48".
-- **Crisis safeguards.** New goal + user story #5 + Open Questions §4, §18.
-- **Sync conflict resolution.** Replaced LWW-on-`logged_at` with LWW-on-`updated_at`.
-- **Streak logic.** Open Question §5; treated as tentative.
-- **Testing / CI / observability / feature flags.** New constraints + Open
-  Questions §11, §12, §13.
-- **Accessibility.** New user story #10; quality-bar entry; needs a leg.
-- **i18n + timezones.** Open Questions §15, §16; user story #11.
-- **Data model — `updated_at`.** Added explicitly; sync depends on it.
-- **Photo / biometric / edit-past-log.** Photos → Open Question §6.
-  Biometric lock → settings concern, not a v1 spec gap. Edit-past-log →
-  Open Question §3.
+### Removed (per hwf-ip9 consolidation)
+
+- Multi-device sync (v1 is local-only)
+- User accounts / OAuth (hardcoded dev account only)
+- Photos, photo attachments
+- Streaks (replaced with simple "X check-ins this month")
+- Crisis intervention surfaces (skip for experiment)
+- Gamification, leaderboards, badges
+- Therapist / clinical claims
+- AI / LLM features
+- Encryption beyond OS file protection
+- GDPR / CCPA tooling
+- Internationalization
+- App store CI/CD, submission
+- Production hosting
+
+### Kept (core to experiment)
+
+- 10×10 Mood Meter (Russell circumplex labels)
+- Emotion log with optional journal note
+- Basic insights (frequency, heatmap)
+- Local storage (expo-sqlite)
+- Local notifications (reminders)
+- Simple backend scaffolding (Express or Fastify with hardcoded auth)
+- Optional sync (pull-then-push, LWW on `updated_at`)
+
+### Experiment goal
+
+Test how fast Gas Town can take a 2-tier app (client + server) from PRD
+consolidation → design → implementation across parallel polecat dispatch.
 
 ---
 
-*End of draft.*
+*PRD consolidated 2026-05-02. Ready for design legs.*
