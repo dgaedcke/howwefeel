@@ -61,7 +61,7 @@ The full conventions block (test ID scheme, file naming, fixture setup, real-ES 
 | T-MAP-024 | `assignment_count` is `long`                                                                           | Boot complete | Inspect mapping        | Type `long`                                         |
 | T-MAP-025 | `color_hex` is `keyword`                                                                               | Boot complete | Inspect mapping        | Type `keyword`                                      |
 | T-MAP-026 | `domain` is `keyword` (controlled vocabulary)                                                          | Boot complete | Inspect mapping        | Type `keyword`                                      |
-| T-MAP-027 | Number of primary shards equals 1 (per spec §3.2; bin count per owner is naturally small)              | Boot complete | `get_settings`         | `index.number_of_shards == "1"`                     |
+| T-MAP-027 | Number of primary shards equals 3 (Foundation locks `tribes_bins` shards at 3 to keep slice 08 distribution tests valid) | Boot complete | `get_settings`         | `index.number_of_shards == "3"`                     |
 
 ### `tribes_assignments` mapping
 
@@ -97,7 +97,7 @@ The full conventions block (test ID scheme, file naming, fixture setup, real-ES 
 | T-MAP-081 | `job_id` is the document `_id`; not stored as a separate field                                                   | Boot complete | Inspect mapping | No `job_id` property; `_id` policy in spec                |
 | T-MAP-082 | `op_type` is `keyword`                                                                                           | Boot complete | Inspect mapping | Type `keyword`                                            |
 | T-MAP-083 | `primary_id` is `keyword`                                                                                        | Boot complete | Inspect mapping | Type `keyword`                                            |
-| T-MAP-084 | `payload` is `object` with `enabled: false` (opaque blob, not searched)                                          | Boot complete | Inspect mapping | `enabled: false`                                          |
+| T-MAP-084 | `query_dsl` is `object` with `enabled: false` (opaque blob, not searched)                                        | Boot complete | Inspect mapping | `enabled: false`                                          |
 | T-MAP-085 | `status` is `keyword` (values: `"pending"`, `"succeeded"`, `"failed_permanent"`)                                 | Boot complete | Inspect mapping | Type `keyword`                                            |
 | T-MAP-086 | `retry_count` is `integer`                                                                                       | Boot complete | Inspect mapping | Type `integer`                                            |
 | T-MAP-087 | `created_at`, `last_attempt_at`, `next_attempt_at` are `date` with strict ISO-8601                               | Boot complete | Inspect mapping | All three are dates                                       |
