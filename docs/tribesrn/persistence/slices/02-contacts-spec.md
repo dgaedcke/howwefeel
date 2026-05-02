@@ -42,17 +42,19 @@ CONTACTS_MAPPING = {
             "phone_numbers":    {
                 "type": "nested",
                 "properties": {
-                    "e164":     {"type": "keyword"},          # +1XXXXXXXXXX normalized
-                    "label":    {"type": "keyword"},          # "mobile" | "home" | "work"
-                    "hash":     {"type": "keyword"},          # SHA-256 for privacy matching
+                    "e164":         {"type": "keyword"},      # +1XXXXXXXXXX normalized
+                    "raw":          {"type": "keyword"},      # Original input, preserved verbatim on parse failure (see §4)
+                    "country_code": {"type": "keyword"},      # ISO country code (e.g., "US")
+                    "label":        {"type": "keyword"},      # "mobile" | "home" | "work"
+                    "value_hash":   {"type": "keyword"},      # SHA-256 for privacy matching and merge dedup key (§6)
                 }
             },
             "email_addresses":  {
                 "type": "nested",
                 "properties": {
-                    "address":  {"type": "keyword"},          # lowercased
-                    "label":    {"type": "keyword"},
-                    "hash":     {"type": "keyword"},
+                    "address":      {"type": "keyword"},      # lowercased
+                    "label":        {"type": "keyword"},
+                    "value_hash":   {"type": "keyword"},      # SHA-256 of address; merge dedup key (§6)
                 }
             },
 
@@ -119,15 +121,17 @@ from pydantic import BaseModel, Field
 
 
 class PhoneNumber(BaseModel):
-    e164: str
+    e164: str | None = None                            # null when parse fails (see §4)
+    raw: str | None = None                             # Verbatim input, populated on parse failure
+    country_code: str | None = None                    # ISO country code (e.g., "US")
     label: Literal["mobile", "home", "work", "other"] = "mobile"
-    hash: str                                          # SHA-256(e164)
+    value_hash: str                                    # SHA-256 over normalized number; merge dedup key (§6)
 
 
 class EmailAddress(BaseModel):
     address: str                                       # lowercased
     label: Literal["home", "work", "icloud", "other"] = "home"
-    hash: str                                          # SHA-256(address)
+    value_hash: str                                    # SHA-256(address); merge dedup key (§6)
 
 
 class ResolutionStatus(str, Enum):
@@ -201,6 +205,10 @@ class IContactRepository(ABC):
     @abstractmethod
     async def delete(self, user_id: str, contact_id: str) -> None:
         """Hard delete. Also deletes all assignments for this contact."""
+
+    @abstractmethod
+    async def count_for_owner(self, user_id: str) -> int:
+        """Return number of contacts owned by user_id."""
 ```
 
 `search`, `get_by_bins`, and `get_unlabeled` are part of the same interface but documented in slice 08 (Read Path) where their query semantics, cursor stability, and shard implications belong.
@@ -303,7 +311,7 @@ def score_candidate(input: ContactImportInput, candidate: Contact) -> float:
     return score
 ```
 
-The `score_candidate` function MAY accumulate weights additively (`max` is shown for the strongest signals; weaker signals such as `last7_phone + phonetic_name` sum to 0.9 — see test plan T-CONTACT-IDRES-025). The exact accumulation rule is locked in the slice-2 epic; the test plan asserts both behaviors.
+The `score_candidate` function accumulates field weights **additively, capping the composite score at 1.0**. A single `exact_phone` match (weight 1.0) reaches the cap on its own; multiple weaker signals sum (e.g., `last7_phone + phonetic_name = 0.6 + 0.3 = 0.9`, per test plan **T-CONTACT-IDRES-025 — the canonical case for the additive rule**). The `max(score, FIELD_WEIGHTS[...])` calls in the sketch above are equivalent to additive-with-cap when only that one signal matches; the elided scoring logic for `last7_phone`, `email_local`, and `phonetic_name` accumulates with `score += weight` and the function returns `min(score, 1.0)`.
 
 `MERGE_THRESHOLD` is read from `TRIBES_ID_MERGE_THRESHOLD` (default 0.85) per shared-context.
 
@@ -318,16 +326,15 @@ The `score_candidate` function MAY accumulate weights additively (`max` is shown
 | `blocking_keys` (array) | UNION — append incoming keys not already present; NEVER replace or truncate. |
 | `phone_numbers` (nested, keyed by `value_hash`) | UNION by `value_hash`. Existing record preserved on hash collision. No deletions. |
 | `email_addresses` (nested, keyed by `value_hash`) | Same as `phone_numbers`. |
-| `name.first`, `name.last` | Incoming wins if non-empty (after trim); else candidate preserved. |
-| `name.display` | Recomputed from winning first/last after merge. |
+| `family_name`, `given_name` | Incoming wins if non-empty (after trim); else candidate preserved. |
+| `display_name` | Recomputed from winning `given_name`/`family_name` after merge. |
 | `canonical_id` | IMMUTABLE after first assignment. Incoming `canonical_id` recorded in `merge_audit` only. |
 | `resolution_status` | Transitions: `unresolved` → `candidate` → `merged`. Once `merged`, no further transitions without explicit admin override (V2). |
-| `source_ids` (array) | UNION. |
-| All other scalars | Candidate (existing) wins. Incoming recorded in `merge_audit.incoming_snapshot`. |
+| All other scalars (incl. `source`) | Candidate (existing) wins. Incoming recorded in `merge_audit.incoming_snapshot`. |
 
 **`canonical_id` Immutability.** Wrapper MUST validate before issuing `update`; raise `MergeIntegrityError` if caller attempts to overwrite.
 
-**Concurrency Safety.** All merge updates MUST use `if_seq_no` + `if_primary_term` from the candidate document. On `VersionConflictEngineException`: retry full fetch-and-merge cycle up to 3 times, then raise `MergeConflictError`.
+**Concurrency Safety.** All merge updates MUST use `if_seq_no` + `if_primary_term` from the candidate document. The wrapper internally retries the full read-merge-write cycle up to 3 times. Each retry attempt's `VersionConflictEngineException` (the raw Elasticsearch optimistic-lock error) is logged at WARN level and **not raised** — `VersionConflictError` from Foundation §7 never surfaces above the merge wrapper. Only after the 3rd consecutive failure does the wrapper raise `MergeConflictError` to the caller, who may decide whether to retry externally.
 
 **Idempotency Token.** Callers MUST supply `import_idempotency_token` (UUID v4, stable for the lifetime of a single import). Before merging, wrapper checks `merge_audit` for an existing record with matching token + same `canonical_id`. If found: return previously recorded result without re-applying.
 
