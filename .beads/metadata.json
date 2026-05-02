@@ -1,16 +1,7 @@
 {
-<<<<<<< HEAD
   "backend": "dolt",
   "database": "dolt",
   "dolt_database": "hwf",
   "dolt_mode": "server",
   "project_id": "gc-local-1745df5c896ee3a37cffbaaabd4decf5"
 }
-=======
-  "database": "dolt",
-  "backend": "dolt",
-  "dolt_mode": "embedded",
-  "dolt_database": "hwf",
-  "project_id": "gc-local-14f86297e688d1f765deb84c14d27671"
-}
->>>>>>> ac15457b0b833e34c5c2c6447823b4e49b501441
