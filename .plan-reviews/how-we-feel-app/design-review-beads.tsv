@@ -1,0 +1,7 @@
+bead_id	focus	title	status
+hwf-mpf	api	Design: API shape and ergonomics	open
+hwf-gap	data	Design: Data model and storage	open
+hwf-6lx	ux	Design: UX and mental model	open
+hwf-qu7	scale	Design: Scale and performance	open
+hwf-2j5	security	Design: Security and trust boundaries	open
+hwf-ub5	integration	Design: Integration and rollout	open
