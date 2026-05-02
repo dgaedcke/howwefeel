@@ -67,14 +67,12 @@ V1 ships four functional indices plus one operational index:
 | Index | Purpose | `_id` scheme | Shards (V1) |
 |---|---|---|---|
 | `tribes_contacts` | Resolved contact entities | UUID4 | 2 |
-| `tribes_bins` | User-owned labels | `sha256("{owner}#{slug(name)}")[:32]` | 1 (per shared-context); test plan asserts 3 — see "Discrepancies" below |
+| `tribes_bins` | User-owned labels | `sha256("{owner}#{slug(name)}")[:32]` | 3 |
 | `tribes_assignments` | `(owner, contact, bin)` triples | `f"{owner}#{contact}#{bin}"` truncated/hashed | 3 |
 | `tribes_tribes` | Coordination units | UUID4 | 1 |
 | `tribes_pending_jobs` | Cross-index cascade retry | `sha256(op_type + primary_id)` | (operational) |
 
 The detailed mapping for each functional index is owned by the slice that owns the repository: bins live in slice 03, contacts in slice 02, assignments in slice 04, tribes in slice 05. Slice 01 owns the **shared analyzer config**, the `tribes_pending_jobs` mapping, and the index lifecycle / bootstrap path.
-
-**Discrepancy to resolve in Foundation epic:** `00-shared-context.md`'s recommended posture is implicit (per-index defaults). Spec §3.2 declares `tribes_bins.number_of_shards = 1` while test plan T-MAP-027 asserts `index.number_of_shards == "3"`. The Foundation epic must adopt one number and update the other artifact in lock-step. Recommendation: align with the test plan (3 primary shards on `tribes_bins`) so shard-distribution slice (08) tests continue to hold.
 
 ---
 
@@ -86,24 +84,24 @@ Used for cross-index cascade retry. Detailed write protocol and lifecycle live i
 {
   "mappings": {
     "properties": {
-      "job_id":         { "type": "keyword" },
-      "op_type":        { "type": "keyword" },
-      "primary_id":     { "type": "keyword" },
-      "target_index":   { "type": "keyword" },
-      "query_dsl":      { "type": "object", "enabled": false },
-      "created_at":     { "type": "date" },
-      "retry_count":    { "type": "integer" },
-      "last_attempted": { "type": "date" },
-      "status":         { "type": "keyword" },
-      "error_log":      { "type": "text" }
+      "op_type":         { "type": "keyword" },
+      "primary_id":      { "type": "keyword" },
+      "target_index":    { "type": "keyword" },
+      "query_dsl":       { "type": "object", "enabled": false },
+      "created_at":      { "type": "date" },
+      "retry_count":     { "type": "integer" },
+      "last_attempted":  { "type": "date" },
+      "next_attempt_at": { "type": "date" },
+      "status":          { "type": "keyword" },
+      "error_log":       { "type": "text" }
     }
   }
 }
 ```
 
-- `job_id` is `sha256(op_type + primary_id)`. The `_id` may be the `job_id` itself; spec/tests differ — Foundation epic must lock one and enforce it. See test plan T-MAP-081.
-- `payload` (test plan name) maps to `query_dsl` (spec name); align nomenclature in epic.
-- Status enum: `"pending"`, `"succeeded"`, `"failed_permanent"`. `next_attempt_at` is referenced by tests (T-MAP-087) but absent from spec mapping — Foundation epic adds it as `date`.
+- The document `_id` is `sha256(op_type + primary_id)`; this hash IS the job's identifier. No separate `job_id` field is stored — re-submitting the same logical cascade upserts the same `_id`.
+- The opaque blob holding the cascade query is named `query_dsl` (single canonical name; tests assert the same field).
+- Status enum: `"pending"`, `"succeeded"`, `"failed_permanent"`. `next_attempt_at` carries the next retry time (sweep filters on `status="pending" AND next_attempt_at <= now`); see slice 06 for the write/sweep protocol.
 
 ---
 
@@ -132,7 +130,7 @@ Custom analyzer used by `tribes_contacts` text fields:
 }
 ```
 
-The test plan refers to this analyzer as `tribes_text` (T-MAP-006, T-MAP-010). Foundation epic locks the canonical name. Recommendation: `tribes_name` (matches spec §3.1 and code samples).
+The canonical name for this analyzer is `tribes_name` (spec mapping above and tests T-MAP-006, T-MAP-010 agree).
 
 The `standard` analyzer used on `tribes_bins.name_search` and `tribes_bins.normalized_name.text` is built-in and requires no configuration.
 
